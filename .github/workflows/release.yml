@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build - ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin_name: sshx-linux-amd64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bin_name: sshx-mac-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin_name: sshx-mac-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin_name: sshx-windows-amd64.exe
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Run Build
+        run: cargo build --release --target ${{ matrix.platform.target }}
+        shell: bash
+
+      - name: Rename and prepare binary
+        run: |
+          mkdir -p dist
+          if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+            cp target/${{ matrix.platform.target }}/release/sshx.exe dist/${{ matrix.platform.bin_name }}
+          else
+            cp target/${{ matrix.platform.target }}/release/sshx dist/${{ matrix.platform.bin_name }}
+          fi
+        shell: bash
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.bin_name }}
+          path: dist/${{ matrix.platform.bin_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Display structure of downloaded files
+        run: ls -R dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

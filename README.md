@@ -39,6 +39,20 @@ O SSHX organiza suas configurações de forma centralizada em:
 
 ## 🛠️ Instalação e Requisitos
 
+### Instalação Rápida (Recomendado)
+
+Você pode instalar o **SSHX** automaticamente em qualquer sistema operacional executando o comando correspondente abaixo:
+
+* **macOS & Linux**:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/typedbywill/sshx/main/scripts/install.sh | bash
+  ```
+
+* **Windows (PowerShell)**:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/typedbywill/sshx/main/scripts/install.ps1 | iex"
+  ```
+
 ### Pré-requisitos
 Certifique-se de ter as seguintes ferramentas de linha de comando instaladas (OpenSSH padrão):
 * `ssh`
@@ -47,7 +61,7 @@ Certifique-se de ter as seguintes ferramentas de linha de comando instaladas (Op
 * `ssh-copy-id` (opcional, mas recomendado)
 * `ssh-agent` e `ssh-add`
 
-### Compilando do Código Fonte
+### Compilando do Código Fonte (Alternativo)
 Clone este repositório e execute a compilação:
 
 ```bash
