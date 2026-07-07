@@ -380,6 +380,33 @@ pub fn run_doctor() -> io::Result<()> {
         }
     }
 
+    // 5. Verify ssh-agent setup/access
+    print!("Verificando disponibilidade do ssh-agent... ");
+    let _ = io::stdout().flush();
+    let agent_check = Command::new("ssh-agent").arg("-s").output();
+    match agent_check {
+        Ok(output) => {
+            if output.status.success() {
+                println!("\x1b[32m[OK] Disponível.\x1b[0m");
+            } else {
+                let err_msg = String::from_utf8_lossy(&output.stderr);
+                let err_trimmed = err_msg.trim();
+                println!("\x1b[31m[ERRO] ssh-agent retornou erro: {}\x1b[0m", err_trimmed);
+                if err_trimmed.contains("1058") {
+                    println!("\x1b[33m[DICA] O serviço 'OpenSSH Authentication Agent' (ssh-agent) está desativado no Windows.\n\
+                             Para corrigir, abra o PowerShell como Administrador e execute:\n\
+                             Set-Service -Name ssh-agent -StartupType Manual\n\
+                             Start-Service ssh-agent\x1b[0m");
+                }
+                issues += 1;
+            }
+        }
+        Err(e) => {
+            println!("\x1b[31m[ERRO] Comando 'ssh-agent' não encontrado ou inacessível: {}\x1b[0m", e);
+            issues += 1;
+        }
+    }
+
     println!("-------------------------------------------");
     if issues == 0 {
         println!("\x1b[32mNenhum problema encontrado. O SSHX está operando perfeitamente!\x1b[0m");

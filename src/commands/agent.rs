@@ -29,9 +29,21 @@ pub fn start_silent() -> io::Result<AgentEnv> {
 
     if !output.status.success() {
         let err_msg = String::from_utf8_lossy(&output.stderr);
+        let err_trimmed = err_msg.trim();
+        let formatted_err = if err_trimmed.contains("1058") {
+            format!(
+                "{}\n\n\x1b[33mDica: O serviço 'OpenSSH Authentication Agent' (ssh-agent) está desativado no Windows.\n\
+                Para corrigir, abra o PowerShell como Administrador e execute:\n\
+                Set-Service -Name ssh-agent -StartupType Manual\n\
+                Start-Service ssh-agent\x1b[0m",
+                err_trimmed
+            )
+        } else {
+            err_trimmed.to_string()
+        };
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            format!("Failed to start ssh-agent: {}", err_msg),
+            format!("Failed to start ssh-agent: {}", formatted_err),
         ));
     }
 
