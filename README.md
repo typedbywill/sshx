@@ -151,6 +151,31 @@ sshx doctor
 
 ---
 
+## 🛠️ Desenvolvimento Local
+
+Para facilitar o desenvolvimento, compilação e teste do SSHX localmente, disponibilizamos um script utilitário em `scripts/dev.sh`.
+
+Você pode executá-lo a partir da raiz do projeto:
+
+```bash
+# Compilar em modo release e atualizar a cópia raiz do repositório
+./scripts/dev.sh build
+
+# Instalar localmente na pasta ~/.local/bin/sshx
+./scripts/dev.sh install
+
+# Executar a versão de desenvolvimento passando argumentos
+./scripts/dev.sh run connect producao
+
+# Rodar os testes unitários
+./scripts/dev.sh test
+
+# Formatar o código (cargo fmt) e rodar o clippy
+./scripts/dev.sh fmt
+```
+
+---
+
 ## ⚖️ Licença
 
 Este projeto é open-source e está licenciado sob a licença MIT.

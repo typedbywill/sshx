@@ -1,5 +1,5 @@
-mod config;
 mod commands;
+mod config;
 
 use clap::{Parser, Subcommand};
 use std::process;
@@ -159,9 +159,26 @@ fn main() {
     // Pre-processing to support raw server names: `sshx producao` -> `sshx connect producao`
     let mut args: Vec<String> = std::env::args().collect();
     let known_subcommands = [
-        "add", "connect", "list", "ls", "info", "remove", "rename", "copy",
-        "exec", "shell", "install-key", "keys", "key", "sync", "doctor",
-        "ping", "config", "export", "import", "agent"
+        "add",
+        "connect",
+        "list",
+        "ls",
+        "info",
+        "remove",
+        "rename",
+        "copy",
+        "exec",
+        "shell",
+        "install-key",
+        "keys",
+        "key",
+        "sync",
+        "doctor",
+        "ping",
+        "config",
+        "export",
+        "import",
+        "agent",
     ];
 
     if args.len() > 1 {

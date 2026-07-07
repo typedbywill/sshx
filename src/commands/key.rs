@@ -1,11 +1,11 @@
-use std::process::Command;
-use std::io;
-use std::fs;
-use std::path::PathBuf;
-use crate::config::{
-    get_keys_dir, load_keys, save_keys, KeyInfo, load_servers, save_servers, resolve_key
-};
 use crate::commands::agent::{ensure_agent_and_key, setup_agent_env};
+use crate::config::{
+    get_keys_dir, load_keys, load_servers, resolve_key, save_keys, save_servers, KeyInfo,
+};
+use std::fs;
+use std::io;
+use std::path::PathBuf;
+use std::process::Command;
 use tabled::{Table, Tabled};
 
 #[derive(Tabled)]
@@ -29,13 +29,14 @@ pub fn list_keys() -> io::Result<()> {
     let mut rows = Vec::new();
     for key in keys {
         // Count how many servers use this key
-        let count = servers.iter()
+        let count = servers
+            .iter()
             .filter(|s| s.key_name.as_deref() == Some(&key.name))
             .count();
 
         // Get fingerprint
-        let fingerprint = get_fingerprint(&key.path)
-            .unwrap_or_else(|_| "Não disponível".to_string());
+        let fingerprint =
+            get_fingerprint(&key.path).unwrap_or_else(|_| "Não disponível".to_string());
 
         rows.push(KeyRow {
             name: key.name.clone(),
@@ -62,16 +63,19 @@ pub fn create_key(name: &str) -> io::Result<PathBuf> {
     if key_path.exists() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("Chave com nome '{}' já existe.", name)
+            format!("Chave com nome '{}' já existe.", name),
         ));
     }
 
     println!("Gerando chave Ed25519 para '{}'...", name);
     let output = Command::new("ssh-keygen")
         .args(&[
-            "-t", "ed25519",
-            "-N", "", // empty passphrase
-            "-f", key_path.to_str().unwrap()
+            "-t",
+            "ed25519",
+            "-N",
+            "", // empty passphrase
+            "-f",
+            key_path.to_str().unwrap(),
         ])
         .output()?;
 
@@ -79,7 +83,7 @@ pub fn create_key(name: &str) -> io::Result<PathBuf> {
         let err = String::from_utf8_lossy(&output.stderr);
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            format!("Falha ao gerar chave SSH: {}", err.trim())
+            format!("Falha ao gerar chave SSH: {}", err.trim()),
         ));
     }
 
@@ -101,17 +105,22 @@ pub fn create_key(name: &str) -> io::Result<PathBuf> {
     });
     save_keys(&keys)?;
 
-    println!("Chave '{}' criada com sucesso em: {}", name, key_path.display());
+    println!(
+        "Chave '{}' criada com sucesso em: {}",
+        name,
+        key_path.display()
+    );
     Ok(key_path)
 }
 
 pub fn delete_key(name: &str) -> io::Result<()> {
     let mut keys = load_keys();
-    let index = keys.iter().position(|k| k.name == name)
-        .ok_or_else(|| io::Error::new(
+    let index = keys.iter().position(|k| k.name == name).ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Chave '{}' não encontrada no keys.yaml", name)
-        ))?;
+            format!("Chave '{}' não encontrada no keys.yaml", name),
+        )
+    })?;
 
     let key = keys.remove(index);
 
@@ -152,17 +161,24 @@ pub fn get_fingerprint(private_key_path: &str) -> io::Result<String> {
         }
         Ok(stdout.trim().to_string())
     } else {
-        Err(io::Error::new(io::ErrorKind::Other, "Failed to get fingerprint"))
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to get fingerprint",
+        ))
     }
 }
 
 pub fn install_key_on_server(server_name: &str) -> io::Result<()> {
     let servers = load_servers();
-    let server = servers.iter().find(|s| s.name == server_name)
-        .ok_or_else(|| io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Servidor '{}' não encontrado.", server_name)
-        ))?;
+    let server = servers
+        .iter()
+        .find(|s| s.name == server_name)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Servidor '{}' não encontrado.", server_name),
+            )
+        })?;
 
     let resolved_key = resolve_key(server.key_name.as_deref())
         .ok_or_else(|| io::Error::new(
@@ -170,13 +186,16 @@ pub fn install_key_on_server(server_name: &str) -> io::Result<()> {
             format!("Servidor '{}' não possui chave SSH associada e nenhuma chave padrão ('default') foi encontrada.", server_name)
         ))?;
 
-    println!("Instalando chave pública '{}' no servidor '{}' ({})...", resolved_key.name, server.name, server.host);
+    println!(
+        "Instalando chave pública '{}' no servidor '{}' ({})...",
+        resolved_key.name, server.name, server.host
+    );
 
     let pub_key_path = format!("{}.pub", resolved_key.path);
     if !PathBuf::from(&pub_key_path).exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Chave pública não encontrada em: {}", pub_key_path)
+            format!("Chave pública não encontrada em: {}", pub_key_path),
         ));
     }
 
@@ -184,9 +203,11 @@ pub fn install_key_on_server(server_name: &str) -> io::Result<()> {
     let mut cmd = Command::new("ssh-copy-id");
     setup_agent_env(&mut cmd);
     cmd.args(&[
-        "-i", &pub_key_path,
-        "-p", &server.port.to_string(),
-        &format!("{}@{}", server.user, server.host)
+        "-i",
+        &pub_key_path,
+        "-p",
+        &server.port.to_string(),
+        &format!("{}@{}", server.user, server.host),
     ]);
 
     let status = cmd.status();
@@ -209,9 +230,10 @@ pub fn install_key_on_server(server_name: &str) -> io::Result<()> {
             let mut ssh_cmd = Command::new("ssh");
             setup_agent_env(&mut ssh_cmd);
             ssh_cmd.args(&[
-                "-p", &server.port.to_string(),
+                "-p",
+                &server.port.to_string(),
                 &format!("{}@{}", server.user, server.host),
-                &remote_command
+                &remote_command,
             ]);
 
             let manual_status = ssh_cmd.status()?;
@@ -221,7 +243,7 @@ pub fn install_key_on_server(server_name: &str) -> io::Result<()> {
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::Other,
-                    "Falha ao instalar chave pública no servidor remoto."
+                    "Falha ao instalar chave pública no servidor remoto.",
                 ))
             }
         }
@@ -230,12 +252,16 @@ pub fn install_key_on_server(server_name: &str) -> io::Result<()> {
 
 pub fn rotate_key(server_name: &str) -> io::Result<()> {
     let mut servers = load_servers();
-    let server_index = servers.iter().position(|s| s.name == server_name)
-        .ok_or_else(|| io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Servidor '{}' não encontrado.", server_name)
-        ))?;
-    
+    let server_index = servers
+        .iter()
+        .position(|s| s.name == server_name)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Servidor '{}' não encontrado.", server_name),
+            )
+        })?;
+
     let server = &servers[server_index];
     let old_key_name = server.key_name.clone();
 
@@ -243,7 +269,10 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
     let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S").to_string();
     let new_key_name = format!("{}_rot_{}", server_name, timestamp);
 
-    println!("Iniciando rotação de chave para o servidor '{}'...", server_name);
+    println!(
+        "Iniciando rotação de chave para o servidor '{}'...",
+        server_name
+    );
 
     // Create the new key
     let new_key_path = create_key(&new_key_name)?;
@@ -258,7 +287,7 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
 
     let mut append_cmd = Command::new("ssh");
     ensure_agent_and_key(&mut append_cmd, old_key_path)?;
-    
+
     if let Some(path) = old_key_path {
         append_cmd.args(&["-i", path]);
         append_cmd.args(&["-o", "IdentitiesOnly=yes"]);
@@ -269,9 +298,10 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
         new_pub_content
     );
     append_cmd.args(&[
-        "-p", &server.port.to_string(),
+        "-p",
+        &server.port.to_string(),
         &format!("{}@{}", server.user, server.host),
-        &remote_append_cmd
+        &remote_append_cmd,
     ]);
 
     let append_status = append_cmd.status()?;
@@ -280,7 +310,7 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
         let _ = delete_key(&new_key_name);
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            "Falha ao instalar a nova chave pública no servidor remoto."
+            "Falha ao instalar a nova chave pública no servidor remoto.",
         ));
     }
 
@@ -289,23 +319,30 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
     let mut verify_cmd = Command::new("ssh");
     ensure_agent_and_key(&mut verify_cmd, Some(new_key_path.to_str().unwrap()))?;
     verify_cmd.args(&[
-        "-i", new_key_path.to_str().unwrap(),
-        "-o", "IdentitiesOnly=yes",
-        "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=5",
-        "-p", &server.port.to_string(),
+        "-i",
+        new_key_path.to_str().unwrap(),
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=5",
+        "-p",
+        &server.port.to_string(),
         &format!("{}@{}", server.user, server.host),
-        "echo OK"
+        "echo OK",
     ]);
 
     let verify_output = verify_cmd.output()?;
-    if !verify_output.status.success() || String::from_utf8_lossy(&verify_output.stdout).trim() != "OK" {
+    if !verify_output.status.success()
+        || String::from_utf8_lossy(&verify_output.stdout).trim() != "OK"
+    {
         println!("AVISO: A verificação da nova chave falhou. A chave antiga permanece ativa.");
         // Try to revert by deleting new key from config (remotely it's appended but old still works)
         let _ = delete_key(&new_key_name);
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            "A nova chave não conseguiu se autenticar. Operação abortada."
+            "A nova chave não conseguiu se autenticar. Operação abortada.",
         ));
     }
 
@@ -320,7 +357,7 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
                 if parts.len() >= 2 {
                     let old_key_base64 = parts[1];
                     println!("Removendo chave antiga do servidor remoto...");
-                    
+
                     let remote_remove_cmd = format!(
                         "grep -v '{}' ~/.ssh/authorized_keys > ~/.ssh/authorized_keys.tmp && mv ~/.ssh/authorized_keys.tmp ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
                         old_key_base64
@@ -329,11 +366,14 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
                     let mut remove_cmd = Command::new("ssh");
                     ensure_agent_and_key(&mut remove_cmd, Some(new_key_path.to_str().unwrap()))?;
                     remove_cmd.args(&[
-                        "-i", new_key_path.to_str().unwrap(),
-                        "-o", "IdentitiesOnly=yes",
-                        "-p", &server.port.to_string(),
+                        "-i",
+                        new_key_path.to_str().unwrap(),
+                        "-o",
+                        "IdentitiesOnly=yes",
+                        "-p",
+                        &server.port.to_string(),
                         &format!("{}@{}", server.user, server.host),
-                        &remote_remove_cmd
+                        &remote_remove_cmd,
                     ]);
 
                     let _ = remove_cmd.status();
@@ -348,14 +388,22 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
 
     // 5. Clean up old key registry if requested or if no longer used
     if let Some(ref old_name) = old_key_name {
-        let still_used = servers.iter().any(|s| s.key_name.as_ref() == Some(old_name));
+        let still_used = servers
+            .iter()
+            .any(|s| s.key_name.as_ref() == Some(old_name));
         if !still_used {
-            println!("Removendo chave antiga '{}' do inventário local...", old_name);
+            println!(
+                "Removendo chave antiga '{}' do inventário local...",
+                old_name
+            );
             let _ = delete_key(old_name);
         }
     }
 
-    println!("Rotação concluída com sucesso! Servidor '{}' agora utiliza a chave '{}'.", server_name, new_key_name);
+    println!(
+        "Rotação concluída com sucesso! Servidor '{}' agora utiliza a chave '{}'.",
+        server_name, new_key_name
+    );
     Ok(())
 }
 

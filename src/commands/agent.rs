@@ -1,6 +1,6 @@
-use std::process::Command;
+use crate::config::{load_agent_env, load_keys, remove_agent_env, save_agent_env, AgentEnv};
 use std::io;
-use crate::config::{save_agent_env, load_agent_env, remove_agent_env, AgentEnv, load_keys};
+use std::process::Command;
 
 #[cfg(unix)]
 fn is_pid_alive(pid: u32) -> bool {
@@ -11,7 +11,7 @@ fn is_pid_alive(pid: u32) -> bool {
 fn is_pid_alive(pid: u32) -> bool {
     if let Ok(output) = Command::new("tasklist")
         .args(&["/FI", &format!("PID eq {}", pid)])
-        .output() 
+        .output()
     {
         let out_str = String::from_utf8_lossy(&output.stdout);
         out_str.contains(&pid.to_string())
@@ -25,13 +25,14 @@ pub fn setup_agent_env(cmd: &mut Command) {
 }
 
 pub fn start_silent() -> io::Result<AgentEnv> {
-    let output = Command::new("ssh-agent")
-        .arg("-s")
-        .output()?;
+    let output = Command::new("ssh-agent").arg("-s").output()?;
 
     if !output.status.success() {
         let err_msg = String::from_utf8_lossy(&output.stderr);
-        return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to start ssh-agent: {}", err_msg)));
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Failed to start ssh-agent: {}", err_msg),
+        ));
     }
 
     let out_str = String::from_utf8_lossy(&output.stdout);
@@ -53,10 +54,16 @@ pub fn start_silent() -> io::Result<AgentEnv> {
     }
 
     if socket.is_empty() || pid == 0 {
-        return Err(io::Error::new(io::ErrorKind::Other, "Failed to parse ssh-agent environment variables."));
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to parse ssh-agent environment variables.",
+        ));
     }
 
-    let env = AgentEnv { socket: socket.clone(), pid };
+    let env = AgentEnv {
+        socket: socket.clone(),
+        pid,
+    };
     save_agent_env(&env)?;
 
     Ok(env)
@@ -85,10 +92,8 @@ pub fn stop() -> io::Result<()> {
     #[cfg(unix)]
     {
         // Try to kill using std::process::Command
-        let status = Command::new("kill")
-            .arg(env.pid.to_string())
-            .status();
-        
+        let status = Command::new("kill").arg(env.pid.to_string()).status();
+
         match status {
             Ok(s) if s.success() => {
                 println!("SSH Agent (PID {}) finalizado com sucesso.", env.pid);
@@ -185,7 +190,10 @@ pub fn ensure_agent_and_key(cmd: &mut Command, key_path: Option<&str>) -> io::Re
 
             let add_status = add_cmd.status()?;
             if !add_status.success() {
-                return Err(io::Error::new(io::ErrorKind::Other, "Falha ao carregar chave no SSH Agent."));
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Falha ao carregar chave no SSH Agent.",
+                ));
             }
         }
     }
@@ -195,8 +203,12 @@ pub fn ensure_agent_and_key(cmd: &mut Command, key_path: Option<&str>) -> io::Re
 
 pub fn add(key_name: &str) -> io::Result<()> {
     let keys = load_keys();
-    let key = keys.iter().find(|k| k.name == key_name)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Chave '{}' não encontrada no keys.yaml", key_name)))?;
+    let key = keys.iter().find(|k| k.name == key_name).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Chave '{}' não encontrada no keys.yaml", key_name),
+        )
+    })?;
 
     let mut cmd = Command::new("ssh-add");
     setup_agent_env(&mut cmd);
@@ -207,14 +219,21 @@ pub fn add(key_name: &str) -> io::Result<()> {
         println!("Chave '{}' adicionada ao SSH Agent.", key_name);
         Ok(())
     } else {
-        Err(io::Error::new(io::ErrorKind::Other, "Falha ao adicionar a chave ao SSH Agent."))
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Falha ao adicionar a chave ao SSH Agent.",
+        ))
     }
 }
 
 pub fn remove(key_name: &str) -> io::Result<()> {
     let keys = load_keys();
-    let key = keys.iter().find(|k| k.name == key_name)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Chave '{}' não encontrada no keys.yaml", key_name)))?;
+    let key = keys.iter().find(|k| k.name == key_name).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Chave '{}' não encontrada no keys.yaml", key_name),
+        )
+    })?;
 
     let mut cmd = Command::new("ssh-add");
     setup_agent_env(&mut cmd);
@@ -225,7 +244,10 @@ pub fn remove(key_name: &str) -> io::Result<()> {
         println!("Chave '{}' removida do SSH Agent.", key_name);
         Ok(())
     } else {
-        Err(io::Error::new(io::ErrorKind::Other, "Falha ao remover a chave do SSH Agent."))
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Falha ao remover a chave do SSH Agent.",
+        ))
     }
 }
 
@@ -245,7 +267,10 @@ pub fn list() -> io::Result<()> {
             println!("Nenhuma chave carregada no SSH Agent.");
             Ok(())
         } else {
-            Err(io::Error::new(io::ErrorKind::Other, format!("Falha ao listar chaves no SSH Agent: {}", stderr.trim())))
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Falha ao listar chaves no SSH Agent: {}", stderr.trim()),
+            ))
         }
     }
 }

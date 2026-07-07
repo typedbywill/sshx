@@ -1,8 +1,8 @@
+use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io;
 use std::path::PathBuf;
-use chrono::Local;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Server {
@@ -39,11 +39,17 @@ pub fn get_keys_dir() -> PathBuf {
     get_config_dir().join("keys")
 }
 
+pub fn get_sockets_dir() -> PathBuf {
+    get_config_dir().join("sockets")
+}
+
 pub fn init_dirs() -> io::Result<()> {
     let config_dir = get_config_dir();
     let keys_dir = get_keys_dir();
+    let sockets_dir = get_sockets_dir();
     fs::create_dir_all(&config_dir)?;
     fs::create_dir_all(&keys_dir)?;
+    fs::create_dir_all(&sockets_dir)?;
 
     // Set correct permissions on Unix
     #[cfg(unix)]
@@ -51,6 +57,7 @@ pub fn init_dirs() -> io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o700))?;
         fs::set_permissions(&keys_dir, fs::Permissions::from_mode(0o700))?;
+        fs::set_permissions(&sockets_dir, fs::Permissions::from_mode(0o700))?;
     }
 
     Ok(())
@@ -71,8 +78,8 @@ pub fn load_servers() -> Vec<Server> {
 pub fn save_servers(servers: &[Server]) -> io::Result<()> {
     init_dirs()?;
     let path = get_config_dir().join("servers.yaml");
-    let content = serde_yaml::to_string(servers)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let content =
+        serde_yaml::to_string(servers).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(path, content)?;
     Ok(())
 }
@@ -92,8 +99,8 @@ pub fn load_keys() -> Vec<KeyInfo> {
 pub fn save_keys(keys: &[KeyInfo]) -> io::Result<()> {
     init_dirs()?;
     let path = get_config_dir().join("keys.yaml");
-    let content = serde_yaml::to_string(keys)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let content =
+        serde_yaml::to_string(keys).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(path, content)?;
     Ok(())
 }
@@ -134,8 +141,8 @@ pub struct AgentEnv {
 pub fn save_agent_env(env: &AgentEnv) -> io::Result<()> {
     init_dirs()?;
     let path = get_config_dir().join("agent.env");
-    let content = serde_json::to_string(env)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let content =
+        serde_json::to_string(env).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(path, content)?;
     Ok(())
 }

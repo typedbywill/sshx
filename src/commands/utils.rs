@@ -1,14 +1,15 @@
-use std::process::Command;
-use std::io::{self, Write};
-use std::fs;
-use std::path::PathBuf;
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
-use crate::config::{
-    load_servers, save_servers, Server, load_keys, save_keys, KeyInfo, get_config_dir, resolve_key
-};
 use crate::commands::agent::ensure_agent_and_key;
-use serde::{Serialize, Deserialize};
+use crate::config::{
+    get_config_dir, get_sockets_dir, load_keys, load_servers, resolve_key, save_keys, save_servers,
+    KeyInfo, Server,
+};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::{self, Write};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::path::PathBuf;
+use std::process::Command;
+use std::time::Duration;
 
 #[derive(Serialize, Deserialize)]
 struct ExportData {
@@ -21,13 +22,17 @@ pub fn copy_files(src: &str, dest: &str) -> io::Result<()> {
     let keys = load_keys();
 
     // Parse src
-    let (real_src, src_port, src_key) = parse_scp_arg(src, &servers, &keys);
+    let (real_src, src_port, src_key, src_server) = parse_scp_arg(src, &servers, &keys);
     // Parse dest
-    let (real_dest, dest_port, dest_key) = parse_scp_arg(dest, &servers, &keys);
+    let (real_dest, dest_port, dest_key, dest_server) = parse_scp_arg(dest, &servers, &keys);
 
     let key = src_key.clone().or(dest_key.clone());
     let mut cmd = Command::new("scp");
     ensure_agent_and_key(&mut cmd, key.as_deref())?;
+
+    if let Some(ref s_name) = src_server.or(dest_server) {
+        add_multiplexing_opts(&mut cmd, s_name);
+    }
 
     // Use port if resolved from either arg
     let port = src_port.or(dest_port);
@@ -51,35 +56,52 @@ pub fn copy_files(src: &str, dest: &str) -> io::Result<()> {
         println!("Cópia de arquivos concluída com sucesso.");
         Ok(())
     } else {
-        Err(io::Error::new(io::ErrorKind::Other, "Comando scp retornou um erro."))
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Comando scp retornou um erro.",
+        ))
     }
 }
 
-fn parse_scp_arg(arg: &str, servers: &[Server], _keys: &[KeyInfo]) -> (String, Option<u16>, Option<String>) {
+fn parse_scp_arg(
+    arg: &str,
+    servers: &[Server],
+    _keys: &[KeyInfo],
+) -> (String, Option<u16>, Option<String>, Option<String>) {
     if let Some(pos) = arg.find(':') {
         let server_name = &arg[..pos];
-        let path = &arg[pos+1..];
+        let path = &arg[pos + 1..];
         if let Some(s) = servers.iter().find(|s| s.name == server_name) {
             let key_path = resolve_key(s.key_name.as_deref()).map(|k| k.path.clone());
-            return (format!("{}@{}:{}", s.user, s.host, path), Some(s.port), key_path);
+            return (
+                format!("{}@{}:{}", s.user, s.host, path),
+                Some(s.port),
+                key_path,
+                Some(s.name.clone()),
+            );
         }
     }
-    (arg.to_string(), None, None)
+    (arg.to_string(), None, None, None)
 }
 
 pub fn exec_command(server_name: &str, remote_cmd: &str) -> io::Result<()> {
     let servers = load_servers();
-    let server = servers.iter().find(|s| s.name == server_name)
-        .ok_or_else(|| io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Servidor '{}' não encontrado.", server_name)
-        ))?;
+    let server = servers
+        .iter()
+        .find(|s| s.name == server_name)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Servidor '{}' não encontrado.", server_name),
+            )
+        })?;
 
     let resolved_key = resolve_key(server.key_name.as_deref());
     let key_path = resolved_key.as_ref().map(|k| k.path.as_str());
 
     let mut cmd = Command::new("ssh");
     ensure_agent_and_key(&mut cmd, key_path)?;
+    add_multiplexing_opts(&mut cmd, server_name);
 
     if let Some(kp) = key_path {
         cmd.arg("-i").arg(kp);
@@ -87,34 +109,46 @@ pub fn exec_command(server_name: &str, remote_cmd: &str) -> io::Result<()> {
     }
 
     cmd.args(&[
-        "-p", &server.port.to_string(),
+        "-p",
+        &server.port.to_string(),
         &format!("{}@{}", server.user, server.host),
-        remote_cmd
+        remote_cmd,
     ]);
 
     let status = cmd.status()?;
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::new(io::ErrorKind::Other, "Comando remoto retornou falha."))
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Comando remoto retornou falha.",
+        ))
     }
 }
 
 pub fn ping_server(server_name: &str) -> io::Result<()> {
     let servers = load_servers();
-    let server = servers.iter().find(|s| s.name == server_name)
-        .ok_or_else(|| io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Servidor '{}' não encontrado.", server_name)
-        ))?;
+    let server = servers
+        .iter()
+        .find(|s| s.name == server_name)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Servidor '{}' não encontrado.", server_name),
+            )
+        })?;
 
-    println!("Pingando servidor '{}' ({}@{} -p {})...", server.name, server.user, server.host, server.port);
+    println!(
+        "Pingando servidor '{}' ({}@{} -p {})...",
+        server.name, server.user, server.host, server.port
+    );
 
     let resolved_key = resolve_key(server.key_name.as_deref());
     let key_path = resolved_key.as_ref().map(|k| k.path.as_str());
 
     let mut cmd = Command::new("ssh");
     ensure_agent_and_key(&mut cmd, key_path)?;
+    add_multiplexing_opts(&mut cmd, server_name);
 
     if let Some(kp) = key_path {
         cmd.arg("-i").arg(kp);
@@ -123,30 +157,46 @@ pub fn ping_server(server_name: &str) -> io::Result<()> {
 
     // Connect with timeout and exit immediately
     cmd.args(&[
-        "-o", "ConnectTimeout=5",
-        "-o", "BatchMode=yes",
-        "-p", &server.port.to_string(),
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "BatchMode=yes",
+        "-p",
+        &server.port.to_string(),
         &format!("{}@{}", server.user, server.host),
-        "exit"
+        "exit",
     ]);
 
     let status = cmd.status()?;
     if status.success() {
-        println!("\x1b[32mConexão estabelecida com sucesso. Servidor '{}' está ONLINE.\x1b[0m", server_name);
+        println!(
+            "\x1b[32mConexão estabelecida com sucesso. Servidor '{}' está ONLINE.\x1b[0m",
+            server_name
+        );
         Ok(())
     } else {
-        println!("\x1b[31mFalha na conexão. Servidor '{}' está OFFLINE ou INACESSÍVEL.\x1b[0m", server_name);
-        Err(io::Error::new(io::ErrorKind::ConnectionRefused, "Falha na conexão SSH."))
+        println!(
+            "\x1b[31mFalha na conexão. Servidor '{}' está OFFLINE ou INACESSÍVEL.\x1b[0m",
+            server_name
+        );
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionRefused,
+            "Falha na conexão SSH.",
+        ))
     }
 }
 
 pub fn show_config(server_name: &str) -> io::Result<()> {
     let servers = load_servers();
-    let server = servers.iter().find(|s| s.name == server_name)
-        .ok_or_else(|| io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Servidor '{}' não encontrado.", server_name)
-        ))?;
+    let server = servers
+        .iter()
+        .find(|s| s.name == server_name)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Servidor '{}' não encontrado.", server_name),
+            )
+        })?;
 
     println!("Host {}", server.name);
     println!("    HostName {}", server.host);
@@ -168,10 +218,10 @@ pub fn export_config(format: &str) -> io::Result<()> {
     let output = match format.to_lowercase().as_str() {
         "json" => serde_json::to_string_pretty(&data)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?,
-        "toml" => toml::to_string_pretty(&data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?,
-        _ => serde_yaml::to_string(&data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?,
+        "toml" => {
+            toml::to_string_pretty(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+        }
+        _ => serde_yaml::to_string(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?,
     };
 
     println!("{}", output);
@@ -181,11 +231,15 @@ pub fn export_config(format: &str) -> io::Result<()> {
 pub fn import_config(filepath: &str) -> io::Result<()> {
     let path = PathBuf::from(filepath);
     if !path.exists() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, format!("Arquivo '{}' não encontrado.", filepath)));
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Arquivo '{}' não encontrado.", filepath),
+        ));
     }
 
     let content = fs::read_to_string(&path)?;
-    let ext = path.extension()
+    let ext = path
+        .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("yaml")
         .to_lowercase();
@@ -193,8 +247,9 @@ pub fn import_config(filepath: &str) -> io::Result<()> {
     let data: ExportData = match ext.as_str() {
         "json" => serde_json::from_str(&content)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
-        "toml" => toml::from_str(&content)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        "toml" => {
+            toml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+        }
         _ => serde_yaml::from_str(&content)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
     };
@@ -257,7 +312,10 @@ pub fn run_doctor() -> io::Result<()> {
     for key in &keys {
         let path = PathBuf::from(&key.path);
         if !path.exists() {
-            println!("\x1b[31m[ERRO] Arquivo de chave privada não encontrado: {} (Chave: {})\x1b[0m", key.path, key.name);
+            println!(
+                "\x1b[31m[ERRO] Arquivo de chave privada não encontrado: {} (Chave: {})\x1b[0m",
+                key.path, key.name
+            );
             issues += 1;
         } else {
             #[cfg(unix)]
@@ -274,7 +332,10 @@ pub fn run_doctor() -> io::Result<()> {
         }
         let pub_path = path.with_extension("pub");
         if !pub_path.exists() {
-            println!("\x1b[31m[ERRO] Arquivo de chave pública não encontrado: {}\x1b[0m", pub_path.display());
+            println!(
+                "\x1b[31m[ERRO] Arquivo de chave pública não encontrado: {}\x1b[0m",
+                pub_path.display()
+            );
             issues += 1;
         }
     }
@@ -283,13 +344,19 @@ pub fn run_doctor() -> io::Result<()> {
     for server in &servers {
         if let Some(ref kn) = server.key_name {
             if !keys.iter().any(|k| &k.name == kn) {
-                println!("\x1b[31m[ERRO] Servidor '{}' aponta para chave inexistente '{}'\x1b[0m", server.name, kn);
+                println!(
+                    "\x1b[31m[ERRO] Servidor '{}' aponta para chave inexistente '{}'\x1b[0m",
+                    server.name, kn
+                );
                 issues += 1;
             }
         }
 
         // Test TCP connectivity briefly
-        print!("Testando conexão TCP com '{}' ({})... ", server.name, server.host);
+        print!(
+            "Testando conexão TCP com '{}' ({})... ",
+            server.name, server.host
+        );
         let _ = io::stdout().flush();
         let addr = format!("{}:{}", server.host, server.port);
         let online = if let Ok(addrs) = addr.to_socket_addrs() {
@@ -317,8 +384,26 @@ pub fn run_doctor() -> io::Result<()> {
     if issues == 0 {
         println!("\x1b[32mNenhum problema encontrado. O SSHX está operando perfeitamente!\x1b[0m");
     } else {
-        println!("\x1b[33mEncontrados {} avisos/erros. Por favor, verifique os alertas acima.\x1b[0m", issues);
+        println!(
+            "\x1b[33mEncontrados {} avisos/erros. Por favor, verifique os alertas acima.\x1b[0m",
+            issues
+        );
     }
 
     Ok(())
+}
+
+pub fn add_multiplexing_opts(cmd: &mut Command, server_name: &str) {
+    #[cfg(unix)]
+    {
+        let socket_dir = get_sockets_dir();
+        let safe_name =
+            server_name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "");
+        let socket_path = socket_dir.join(format!("{}.sock", safe_name));
+        if let Some(path_str) = socket_path.to_str() {
+            cmd.arg("-o").arg("ControlMaster=auto");
+            cmd.arg("-o").arg(format!("ControlPath={}", path_str));
+            cmd.arg("-o").arg("ControlPersist=10m");
+        }
+    }
 }

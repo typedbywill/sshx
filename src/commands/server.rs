@@ -1,14 +1,12 @@
-use std::process::Command;
+use crate::commands::agent::ensure_agent_and_key;
+use crate::commands::key::{create_key, get_fingerprint, install_key_on_server};
+use crate::config::{add_history, load_keys, load_servers, resolve_key, save_servers, Server};
+use chrono::Local;
+use dialoguer::{Confirm, Input, Select};
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::process::Command;
 use std::time::Duration;
-use crate::config::{
-    load_servers, save_servers, Server, load_keys, add_history, resolve_key
-};
-use crate::commands::key::{create_key, get_fingerprint, install_key_on_server};
-use crate::commands::agent::ensure_agent_and_key;
-use dialoguer::{Input, Select, Confirm};
-use chrono::Local;
 use tabled::{Table, Tabled};
 
 #[derive(Tabled)]
@@ -34,7 +32,7 @@ pub fn add_server(name: &str) -> io::Result<()> {
     if servers.iter().any(|s| s.name == name) {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("Servidor com nome '{}' já está cadastrado.", name)
+            format!("Servidor com nome '{}' já está cadastrado.", name),
         ));
     }
 
@@ -62,7 +60,7 @@ pub fn add_server(name: &str) -> io::Result<()> {
         .allow_empty(true)
         .interact_text()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    
+
     let environment = if env_input.trim().is_empty() {
         None
     } else {
@@ -73,7 +71,7 @@ pub fn add_server(name: &str) -> io::Result<()> {
     let auth_options = vec![
         "Criar uma nova chave SSH Ed25519",
         "Usar uma chave SSH cadastrada existente",
-        "Usar chave padrão do sistema / Sem chave específica"
+        "Usar chave padrão do sistema / Sem chave específica",
     ];
 
     let selection = Select::new()
@@ -100,7 +98,10 @@ pub fn add_server(name: &str) -> io::Result<()> {
                     key_name = Some(k_name);
                 }
                 Err(e) => {
-                    println!("Erro ao criar chave, continuando sem chave específica: {}", e);
+                    println!(
+                        "Erro ao criar chave, continuando sem chave específica: {}",
+                        e
+                    );
                 }
             }
         }
@@ -199,11 +200,12 @@ pub fn list_servers() -> io::Result<()> {
 
 pub fn connect_server(name: &str) -> io::Result<()> {
     let mut servers = load_servers();
-    let index = servers.iter().position(|s| s.name == name)
-        .ok_or_else(|| io::Error::new(
+    let index = servers.iter().position(|s| s.name == name).ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Servidor '{}' não encontrado.", name)
-        ))?;
+            format!("Servidor '{}' não encontrado.", name),
+        )
+    })?;
 
     let server = &mut servers[index];
     server.last_connected = Some(Local::now().to_rfc3339());
@@ -214,13 +216,17 @@ pub fn connect_server(name: &str) -> io::Result<()> {
     // Record history
     let _ = add_history(name);
 
-    println!("Conectando-se ao servidor '{}' ({})...", server_copy.name, server_copy.host);
+    println!(
+        "Conectando-se ao servidor '{}' ({})...",
+        server_copy.name, server_copy.host
+    );
 
     let resolved_key = resolve_key(server_copy.key_name.as_deref());
     let key_path = resolved_key.as_ref().map(|k| k.path.as_str());
 
     let mut cmd = Command::new("ssh");
     ensure_agent_and_key(&mut cmd, key_path)?;
+    crate::commands::utils::add_multiplexing_opts(&mut cmd, name);
 
     if let Some(kp) = key_path {
         cmd.arg("-i").arg(kp);
@@ -234,7 +240,10 @@ pub fn connect_server(name: &str) -> io::Result<()> {
     {
         use std::os::unix::process::CommandExt;
         let err = cmd.exec();
-        return Err(io::Error::new(io::ErrorKind::Other, format!("Falha ao executar SSH: {}", err)));
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Falha ao executar SSH: {}", err),
+        ));
     }
 
     #[cfg(not(unix))]
@@ -242,7 +251,10 @@ pub fn connect_server(name: &str) -> io::Result<()> {
         let mut child = cmd.spawn()?;
         let status = child.wait()?;
         if !status.success() {
-            return Err(io::Error::new(io::ErrorKind::Other, "Processo SSH retornou erro."));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Processo SSH retornou erro.",
+            ));
         }
         Ok(())
     }
@@ -250,19 +262,26 @@ pub fn connect_server(name: &str) -> io::Result<()> {
 
 pub fn info_server(name: &str) -> io::Result<()> {
     let servers = load_servers();
-    let server = servers.iter().find(|s| s.name == name)
-        .ok_or_else(|| io::Error::new(
+    let server = servers.iter().find(|s| s.name == name).ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Servidor '{}' não encontrado.", name)
-        ))?;
+            format!("Servidor '{}' não encontrado.", name),
+        )
+    })?;
 
     println!("--- Informações do Servidor: {} ---", server.name);
     println!("Host:            {}", server.host);
     println!("Usuário:         {}", server.user);
     println!("Porta:           {}", server.port);
-    println!("Ambiente:        {}", server.environment.as_deref().unwrap_or("-"));
+    println!(
+        "Ambiente:        {}",
+        server.environment.as_deref().unwrap_or("-")
+    );
     println!("Criado em:       {}", server.created_at);
-    println!("Última conexão:  {}", server.last_connected.as_deref().unwrap_or("Nunca"));
+    println!(
+        "Última conexão:  {}",
+        server.last_connected.as_deref().unwrap_or("Nunca")
+    );
 
     // Key information
     if let Some(ref k_name) = server.key_name {
@@ -281,10 +300,10 @@ pub fn info_server(name: &str) -> io::Result<()> {
     // Ping check
     print!("Status Conexão:  Verificando...");
     let _ = io::stdout().flush();
-    
+
     let addr = format!("{}:{}", server.host, server.port);
     let timeout = Duration::from_secs(3);
-    
+
     // Resolve host address and try TCP connection
     let online = if let Ok(addrs) = addr.to_socket_addrs() {
         let mut success = false;
@@ -310,11 +329,12 @@ pub fn info_server(name: &str) -> io::Result<()> {
 
 pub fn remove_server(name: &str) -> io::Result<()> {
     let mut servers = load_servers();
-    let index = servers.iter().position(|s| s.name == name)
-        .ok_or_else(|| io::Error::new(
+    let index = servers.iter().position(|s| s.name == name).ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Servidor '{}' não encontrado.", name)
-        ))?;
+            format!("Servidor '{}' não encontrado.", name),
+        )
+    })?;
 
     servers.remove(index);
     save_servers(&servers)?;
@@ -324,23 +344,30 @@ pub fn remove_server(name: &str) -> io::Result<()> {
 
 pub fn rename_server(old_name: &str, new_name: &str) -> io::Result<()> {
     let mut servers = load_servers();
-    
+
     // Check if new name already exists
     if servers.iter().any(|s| s.name == new_name) {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("Um servidor com o nome '{}' já existe.", new_name)
+            format!("Um servidor com o nome '{}' já existe.", new_name),
         ));
     }
 
-    let index = servers.iter().position(|s| s.name == old_name)
-        .ok_or_else(|| io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Servidor '{}' não encontrado.", old_name)
-        ))?;
+    let index = servers
+        .iter()
+        .position(|s| s.name == old_name)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Servidor '{}' não encontrado.", old_name),
+            )
+        })?;
 
     servers[index].name = new_name.to_string();
     save_servers(&servers)?;
-    println!("Servidor renomeado de '{}' para '{}' com sucesso.", old_name, new_name);
+    println!(
+        "Servidor renomeado de '{}' para '{}' com sucesso.",
+        old_name, new_name
+    );
     Ok(())
 }
