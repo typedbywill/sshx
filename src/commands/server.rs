@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 use crate::config::{
-    load_servers, save_servers, Server, load_keys, add_history
+    load_servers, save_servers, Server, load_keys, add_history, resolve_key
 };
 use crate::commands::key::{create_key, get_fingerprint, install_key_on_server};
 use crate::commands::agent::ensure_agent_and_key;
@@ -216,19 +216,15 @@ pub fn connect_server(name: &str) -> io::Result<()> {
 
     println!("Conectando-se ao servidor '{}' ({})...", server_copy.name, server_copy.host);
 
-    let mut key_path = None;
-    if let Some(ref k_name) = server_copy.key_name {
-        let keys = load_keys();
-        if let Some(k) = keys.iter().find(|k| &k.name == k_name) {
-            key_path = Some(k.path.clone());
-        }
-    }
+    let resolved_key = resolve_key(server_copy.key_name.as_deref());
+    let key_path = resolved_key.as_ref().map(|k| k.path.as_str());
 
     let mut cmd = Command::new("ssh");
-    ensure_agent_and_key(&mut cmd, key_path.as_deref())?;
+    ensure_agent_and_key(&mut cmd, key_path)?;
 
-    if let Some(ref kp) = key_path {
+    if let Some(kp) = key_path {
         cmd.arg("-i").arg(kp);
+        cmd.arg("-o").arg("IdentitiesOnly=yes");
     }
 
     cmd.arg("-p").arg(server_copy.port.to_string());

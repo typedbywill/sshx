@@ -3,7 +3,7 @@ use std::io;
 use std::fs;
 use std::path::PathBuf;
 use crate::config::{
-    get_keys_dir, load_keys, save_keys, KeyInfo, load_servers, save_servers
+    get_keys_dir, load_keys, save_keys, KeyInfo, load_servers, save_servers, resolve_key
 };
 use crate::commands::agent::{ensure_agent_and_key, setup_agent_env};
 use tabled::{Table, Tabled};
@@ -164,22 +164,15 @@ pub fn install_key_on_server(server_name: &str) -> io::Result<()> {
             format!("Servidor '{}' não encontrado.", server_name)
         ))?;
 
-    let key_name = server.key_name.as_ref()
+    let resolved_key = resolve_key(server.key_name.as_deref())
         .ok_or_else(|| io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Servidor '{}' não possui chave SSH associada.", server_name)
+            format!("Servidor '{}' não possui chave SSH associada e nenhuma chave padrão ('default') foi encontrada.", server_name)
         ))?;
 
-    let keys = load_keys();
-    let key = keys.iter().find(|k| &k.name == key_name)
-        .ok_or_else(|| io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Chave '{}' associada ao servidor não foi encontrada no keys.yaml", key_name)
-        ))?;
+    println!("Instalando chave pública '{}' no servidor '{}' ({})...", resolved_key.name, server.name, server.host);
 
-    println!("Instalando chave pública '{}' no servidor '{}' ({})...", key_name, server.name, server.host);
-
-    let pub_key_path = format!("{}.pub", key.path);
+    let pub_key_path = format!("{}.pub", resolved_key.path);
     if !PathBuf::from(&pub_key_path).exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -260,19 +253,15 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
 
     // 1. Install the new key using the old key for auth
     println!("Instalando nova chave no servidor remoto...");
-    let mut old_key_path = None;
-    if let Some(ref old_name) = old_key_name {
-        let keys = load_keys();
-        if let Some(old_k) = keys.iter().find(|k| &k.name == old_name) {
-            old_key_path = Some(old_k.path.clone());
-        }
-    }
+    let old_key = resolve_key(old_key_name.as_deref());
+    let old_key_path = old_key.as_ref().map(|k| k.path.as_str());
 
     let mut append_cmd = Command::new("ssh");
-    ensure_agent_and_key(&mut append_cmd, old_key_path.as_deref())?;
+    ensure_agent_and_key(&mut append_cmd, old_key_path)?;
     
-    if let Some(ref path) = old_key_path {
+    if let Some(path) = old_key_path {
         append_cmd.args(&["-i", path]);
+        append_cmd.args(&["-o", "IdentitiesOnly=yes"]);
     }
 
     let remote_append_cmd = format!(
@@ -301,6 +290,7 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
     ensure_agent_and_key(&mut verify_cmd, Some(new_key_path.to_str().unwrap()))?;
     verify_cmd.args(&[
         "-i", new_key_path.to_str().unwrap(),
+        "-o", "IdentitiesOnly=yes",
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=5",
         "-p", &server.port.to_string(),
@@ -340,6 +330,7 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
                     ensure_agent_and_key(&mut remove_cmd, Some(new_key_path.to_str().unwrap()))?;
                     remove_cmd.args(&[
                         "-i", new_key_path.to_str().unwrap(),
+                        "-o", "IdentitiesOnly=yes",
                         "-p", &server.port.to_string(),
                         &format!("{}@{}", server.user, server.host),
                         &remote_remove_cmd

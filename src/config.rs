@@ -156,3 +156,9 @@ pub fn remove_agent_env() -> io::Result<()> {
     }
     Ok(())
 }
+
+pub fn resolve_key(key_name: Option<&str>) -> Option<KeyInfo> {
+    let keys = load_keys();
+    let name_to_find = key_name.unwrap_or("default");
+    keys.into_iter().find(|k| k.name == name_to_find)
+}

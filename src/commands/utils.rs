@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 use crate::config::{
-    load_servers, save_servers, Server, load_keys, save_keys, KeyInfo, get_config_dir
+    load_servers, save_servers, Server, load_keys, save_keys, KeyInfo, get_config_dir, resolve_key
 };
 use crate::commands::agent::ensure_agent_and_key;
 use serde::{Serialize, Deserialize};
@@ -38,7 +38,8 @@ pub fn copy_files(src: &str, dest: &str) -> io::Result<()> {
     // Use key if resolved from either arg
     let key = src_key.or(dest_key);
     if let Some(k) = key {
-        cmd.arg("-i").arg(k);
+        cmd.arg("-i").arg(&k);
+        cmd.arg("-o").arg("IdentitiesOnly=yes");
     }
 
     cmd.arg(&real_src);
@@ -54,14 +55,12 @@ pub fn copy_files(src: &str, dest: &str) -> io::Result<()> {
     }
 }
 
-fn parse_scp_arg(arg: &str, servers: &[Server], keys: &[KeyInfo]) -> (String, Option<u16>, Option<String>) {
+fn parse_scp_arg(arg: &str, servers: &[Server], _keys: &[KeyInfo]) -> (String, Option<u16>, Option<String>) {
     if let Some(pos) = arg.find(':') {
         let server_name = &arg[..pos];
         let path = &arg[pos+1..];
         if let Some(s) = servers.iter().find(|s| s.name == server_name) {
-            let key_path = s.key_name.as_ref().and_then(|kn| {
-                keys.iter().find(|k| &k.name == kn).map(|k| k.path.clone())
-            });
+            let key_path = resolve_key(s.key_name.as_deref()).map(|k| k.path.clone());
             return (format!("{}@{}:{}", s.user, s.host, path), Some(s.port), key_path);
         }
     }
@@ -76,19 +75,15 @@ pub fn exec_command(server_name: &str, remote_cmd: &str) -> io::Result<()> {
             format!("Servidor '{}' não encontrado.", server_name)
         ))?;
 
-    let mut key_path = None;
-    if let Some(ref k_name) = server.key_name {
-        let keys = load_keys();
-        if let Some(k) = keys.iter().find(|k| &k.name == k_name) {
-            key_path = Some(k.path.clone());
-        }
-    }
+    let resolved_key = resolve_key(server.key_name.as_deref());
+    let key_path = resolved_key.as_ref().map(|k| k.path.as_str());
 
     let mut cmd = Command::new("ssh");
-    ensure_agent_and_key(&mut cmd, key_path.as_deref())?;
+    ensure_agent_and_key(&mut cmd, key_path)?;
 
-    if let Some(ref kp) = key_path {
+    if let Some(kp) = key_path {
         cmd.arg("-i").arg(kp);
+        cmd.arg("-o").arg("IdentitiesOnly=yes");
     }
 
     cmd.args(&[
@@ -115,19 +110,15 @@ pub fn ping_server(server_name: &str) -> io::Result<()> {
 
     println!("Pingando servidor '{}' ({}@{} -p {})...", server.name, server.user, server.host, server.port);
 
-    let mut key_path = None;
-    if let Some(ref k_name) = server.key_name {
-        let keys = load_keys();
-        if let Some(k) = keys.iter().find(|k| &k.name == k_name) {
-            key_path = Some(k.path.clone());
-        }
-    }
+    let resolved_key = resolve_key(server.key_name.as_deref());
+    let key_path = resolved_key.as_ref().map(|k| k.path.as_str());
 
     let mut cmd = Command::new("ssh");
-    ensure_agent_and_key(&mut cmd, key_path.as_deref())?;
+    ensure_agent_and_key(&mut cmd, key_path)?;
 
-    if let Some(ref kp) = key_path {
+    if let Some(kp) = key_path {
         cmd.arg("-i").arg(kp);
+        cmd.arg("-o").arg("IdentitiesOnly=yes");
     }
 
     // Connect with timeout and exit immediately
@@ -161,11 +152,9 @@ pub fn show_config(server_name: &str) -> io::Result<()> {
     println!("    HostName {}", server.host);
     println!("    User {}", server.user);
     println!("    Port {}", server.port);
-    if let Some(ref k_name) = server.key_name {
-        let keys = load_keys();
-        if let Some(k) = keys.iter().find(|k| &k.name == k_name) {
-            println!("    IdentityFile {}", k.path);
-        }
+    if let Some(k) = resolve_key(server.key_name.as_deref()) {
+        println!("    IdentityFile {}", k.path);
+        println!("    IdentitiesOnly yes");
     }
     Ok(())
 }
