@@ -20,7 +20,7 @@ try {
     $response = Invoke-RestMethod -Uri $releasesUrl -UseBasicParsing
     $latestRelease = $response.tag_name
 } catch {
-    $latestRelease = "v0.1.0"
+    $latestRelease = "v0.1.1"
     Write-Warning "Could not fetch latest release, using default: $latestRelease"
 }
 

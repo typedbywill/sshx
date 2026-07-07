@@ -42,7 +42,7 @@ LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" 
 
 if [ -z "$LATEST_RELEASE" ]; then
     # Fallback to v0.1.0 if API call fails
-    LATEST_RELEASE="v0.1.0"
+    LATEST_RELEASE="v0.1.1"
     echo "Could not fetch latest release tag, using fallback: $LATEST_RELEASE"
 else
     echo "Found release $LATEST_RELEASE"
