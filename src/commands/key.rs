@@ -205,6 +205,8 @@ pub fn install_key_on_server(server_name: &str) -> io::Result<()> {
     cmd.args(&[
         "-i",
         &pub_key_path,
+        "-o",
+        "StrictHostKeyChecking=accept-new",
         "-p",
         &server.port.to_string(),
         &format!("{}@{}", server.user, server.host),
@@ -223,13 +225,16 @@ pub fn install_key_on_server(server_name: &str) -> io::Result<()> {
             let pub_key_content = pub_key_content.trim();
 
             let remote_command = format!(
-                "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '{}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
+                "mkdir -p ~/.ssh && chmod 700 ~/.ssh && printf '\\n%s\\n' '{}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
                 pub_key_content
             );
 
             let mut ssh_cmd = Command::new("ssh");
             setup_agent_env(&mut ssh_cmd);
             ssh_cmd.args(&[
+                "-t",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
                 "-p",
                 &server.port.to_string(),
                 &format!("{}@{}", server.user, server.host),

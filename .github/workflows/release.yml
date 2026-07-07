@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -9,8 +11,60 @@ permissions:
   contents: write
 
 jobs:
+  check-version:
+    name: Check Version Bump
+    runs-on: ubuntu-latest
+    outputs:
+      bumped: ${{ steps.check.outputs.bumped }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version and update scripts
+        id: check
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "Triggered by tag push: ${{ github.ref_name }}"
+            echo "bumped=true" >> $GITHUB_OUTPUT
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
+            echo "Current Cargo.toml version: $VERSION"
+            
+            if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+              echo "Tag v$VERSION already exists. Skipping release automation."
+              echo "bumped=false" >> $GITHUB_OUTPUT
+            else
+              echo "New version detected: v$VERSION"
+              
+              # Update installation scripts fallback version
+              sed -i 's/LATEST_RELEASE="v[0-9]*\.[0-9]*\.[0-9]*"/LATEST_RELEASE="v'"$VERSION"'"/g' scripts/install.sh
+              sed -i 's/\$latestRelease = "v[0-9]*\.[0-9]*\.[0-9]*"/\$latestRelease = "v'"$VERSION"'"/g' scripts/install.ps1
+              
+              # Commit and push changes
+              git config --local user.email "github-actions[bot]@users.noreply.github.com"
+              git config --local user.name "github-actions[bot]"
+              git add scripts/install.sh scripts/install.ps1
+              git commit -m "chore: update installation scripts fallback to v$VERSION [skip ci]" || echo "No changes to commit"
+              git push origin main
+              
+              # Tag the version
+              git tag "v$VERSION"
+              git push origin "v$VERSION"
+              
+              echo "bumped=true" >> $GITHUB_OUTPUT
+              echo "version=v$VERSION" >> $GITHUB_OUTPUT
+            fi
+          fi
+        shell: bash
+
   build:
     name: Build - ${{ matrix.platform.target }}
+    needs: check-version
+    if: needs.check-version.outputs.bumped == 'true'
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
@@ -32,6 +86,8 @@ jobs:
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-version.outputs.version }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -60,11 +116,13 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [check-version, build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-version.outputs.version }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -78,8 +136,10 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.check-version.outputs.version }}
           files: dist/*
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

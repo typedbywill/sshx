@@ -6,7 +6,7 @@ use dialoguer::{Confirm, Input, Select};
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tabled::{Table, Tabled};
 
 #[derive(Tabled)]
@@ -236,28 +236,98 @@ pub fn connect_server(name: &str) -> io::Result<()> {
     cmd.arg("-p").arg(server_copy.port.to_string());
     cmd.arg(format!("{}@{}", server_copy.user, server_copy.host));
 
+    let start_time = Instant::now();
+
     #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let err = cmd.exec();
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Falha ao executar SSH: {}", err),
-        ));
-    }
+    let status = {
+        let sigint_old = unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+        let sigquit_old = unsafe { libc::signal(libc::SIGQUIT, libc::SIG_IGN) };
+
+        let mut child = cmd.spawn()?;
+        let res = child.wait();
+
+        unsafe {
+            libc::signal(libc::SIGINT, sigint_old);
+            libc::signal(libc::SIGQUIT, sigquit_old);
+        }
+        res?
+    };
 
     #[cfg(not(unix))]
-    {
+    let status = {
         let mut child = cmd.spawn()?;
-        let status = child.wait()?;
-        if !status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Processo SSH retornou erro.",
-            ));
+        child.wait()?
+    };
+
+    let duration = start_time.elapsed();
+    print_connection_summary(&server_copy, duration, status);
+
+    if let Some(code) = status.code() {
+        if code != 0 {
+            std::process::exit(code);
         }
-        Ok(())
+    } else {
+        std::process::exit(130);
     }
+
+    Ok(())
+}
+
+fn print_connection_summary(server: &Server, duration: Duration, status: std::process::ExitStatus) {
+    let duration_secs = duration.as_secs();
+    let hours = duration_secs / 3600;
+    let minutes = (duration_secs % 3600) / 60;
+    let seconds = duration_secs % 60;
+
+    let duration_str = if hours > 0 {
+        format!("{:02}h {:02}m {:02}s", hours, minutes, seconds)
+    } else if minutes > 0 {
+        format!("{:02}m {:02}s", minutes, seconds)
+    } else {
+        format!("{}s", seconds)
+    };
+
+    let auth_str = if let Some(ref key_name) = server.key_name {
+        format!("Chave SSH '{}'", key_name)
+    } else {
+        "Padrão do sistema (Chave/Senha/Agente)".to_string()
+    };
+
+    let server_info = format!("{} ({})", server.name, server.host);
+    let server_info = if server_info.chars().count() > 38 {
+        let mut truncated: String = server_info.chars().take(35).collect();
+        truncated.push_str("...");
+        truncated
+    } else {
+        server_info
+    };
+
+    let auth_str = if auth_str.chars().count() > 38 {
+        let mut truncated: String = auth_str.chars().take(35).collect();
+        truncated.push_str("...");
+        truncated
+    } else {
+        auth_str
+    };
+
+    let code_str;
+    let (status_color, status_text) = match status.code() {
+        Some(0) => ("\x1b[32m", "Sucesso (Código 0)"),
+        Some(code) => {
+            code_str = format!("Erro (Código {})", code);
+            ("\x1b[31m", code_str.as_str())
+        }
+        None => ("\x1b[33m", "Terminado por sinal"),
+    };
+
+    println!("\n\x1b[36m┌────────────────────────────────────────────────────────┐\x1b[0m");
+    println!("\x1b[36m│\x1b[0m   \x1b[1;35mConexão SSH encerrada com o servidor\x1b[0m                  \x1b[36m│\x1b[0m");
+    println!("\x1b[36m├────────────────────────────────────────────────────────┤\x1b[0m");
+    println!("\x1b[36m│\x1b[0m  \x1b[1mServidor:\x1b[0m      {:<38} \x1b[36m│\x1b[0m", server_info);
+    println!("\x1b[36m│\x1b[0m  \x1b[1mDuração:\x1b[0m       {:<38} \x1b[36m│\x1b[0m", duration_str);
+    println!("\x1b[36m│\x1b[0m  \x1b[1mAutenticação:\x1b[0m  {:<38} \x1b[36m│\x1b[0m", auth_str);
+    println!("\x1b[36m│\x1b[0m  \x1b[1mStatus:\x1b[0m        {}{:<38}\x1b[0m \x1b[36m│\x1b[0m", status_color, status_text);
+    println!("\x1b[36m└────────────────────────────────────────────────────────┘\x1b[0m\n");
 }
 
 pub fn info_server(name: &str) -> io::Result<()> {
