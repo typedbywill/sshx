@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::config::{
     load_servers, save_servers, Server, load_keys, save_keys, KeyInfo, get_config_dir
 };
-use crate::commands::agent::setup_agent_env;
+use crate::commands::agent::ensure_agent_and_key;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
@@ -25,8 +25,9 @@ pub fn copy_files(src: &str, dest: &str) -> io::Result<()> {
     // Parse dest
     let (real_dest, dest_port, dest_key) = parse_scp_arg(dest, &servers, &keys);
 
+    let key = src_key.clone().or(dest_key.clone());
     let mut cmd = Command::new("scp");
-    setup_agent_env(&mut cmd);
+    ensure_agent_and_key(&mut cmd, key.as_deref())?;
 
     // Use port if resolved from either arg
     let port = src_port.or(dest_port);
@@ -75,14 +76,19 @@ pub fn exec_command(server_name: &str, remote_cmd: &str) -> io::Result<()> {
             format!("Servidor '{}' não encontrado.", server_name)
         ))?;
 
-    let mut cmd = Command::new("ssh");
-    setup_agent_env(&mut cmd);
-
+    let mut key_path = None;
     if let Some(ref k_name) = server.key_name {
         let keys = load_keys();
         if let Some(k) = keys.iter().find(|k| &k.name == k_name) {
-            cmd.arg("-i").arg(&k.path);
+            key_path = Some(k.path.clone());
         }
+    }
+
+    let mut cmd = Command::new("ssh");
+    ensure_agent_and_key(&mut cmd, key_path.as_deref())?;
+
+    if let Some(ref kp) = key_path {
+        cmd.arg("-i").arg(kp);
     }
 
     cmd.args(&[
@@ -109,14 +115,19 @@ pub fn ping_server(server_name: &str) -> io::Result<()> {
 
     println!("Pingando servidor '{}' ({}@{} -p {})...", server.name, server.user, server.host, server.port);
 
-    let mut cmd = Command::new("ssh");
-    setup_agent_env(&mut cmd);
-
+    let mut key_path = None;
     if let Some(ref k_name) = server.key_name {
         let keys = load_keys();
         if let Some(k) = keys.iter().find(|k| &k.name == k_name) {
-            cmd.arg("-i").arg(&k.path);
+            key_path = Some(k.path.clone());
         }
+    }
+
+    let mut cmd = Command::new("ssh");
+    ensure_agent_and_key(&mut cmd, key_path.as_deref())?;
+
+    if let Some(ref kp) = key_path {
+        cmd.arg("-i").arg(kp);
     }
 
     // Connect with timeout and exit immediately

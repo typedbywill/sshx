@@ -2,19 +2,29 @@ use std::process::Command;
 use std::io;
 use crate::config::{save_agent_env, load_agent_env, remove_agent_env, AgentEnv, load_keys};
 
-pub fn setup_agent_env(cmd: &mut Command) {
-    // If the shell already has SSH_AUTH_SOCK, use it.
-    if std::env::var("SSH_AUTH_SOCK").is_ok() {
-        return;
-    }
-    // Otherwise, check if we have a saved agent.env.
-    if let Some(env) = load_agent_env() {
-        cmd.env("SSH_AUTH_SOCK", &env.socket);
-        cmd.env("SSH_AGENT_PID", env.pid.to_string());
+#[cfg(unix)]
+fn is_pid_alive(pid: u32) -> bool {
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+fn is_pid_alive(pid: u32) -> bool {
+    if let Ok(output) = Command::new("tasklist")
+        .args(&["/FI", &format!("PID eq {}", pid)])
+        .output() 
+    {
+        let out_str = String::from_utf8_lossy(&output.stdout);
+        out_str.contains(&pid.to_string())
+    } else {
+        false
     }
 }
 
-pub fn start() -> io::Result<()> {
+pub fn setup_agent_env(cmd: &mut Command) {
+    let _ = ensure_agent_and_key(cmd, None);
+}
+
+pub fn start_silent() -> io::Result<AgentEnv> {
     let output = Command::new("ssh-agent")
         .arg("-s")
         .output()?;
@@ -49,10 +59,16 @@ pub fn start() -> io::Result<()> {
     let env = AgentEnv { socket: socket.clone(), pid };
     save_agent_env(&env)?;
 
+    Ok(env)
+}
+
+pub fn start() -> io::Result<()> {
+    let env = start_silent()?;
+
     // Output bash-compatible export statements for eval
-    println!("SSH_AUTH_SOCK={}; export SSH_AUTH_SOCK;", socket);
-    println!("SSH_AGENT_PID={}; export SSH_AGENT_PID;", pid);
-    println!("echo Agent pid {};", pid);
+    println!("SSH_AUTH_SOCK={}; export SSH_AUTH_SOCK;", env.socket);
+    println!("SSH_AGENT_PID={}; export SSH_AGENT_PID;", env.pid);
+    println!("echo Agent pid {};", env.pid);
 
     Ok(())
 }
@@ -99,8 +115,85 @@ pub fn stop() -> io::Result<()> {
     Ok(())
 }
 
+pub fn ensure_agent_and_key(cmd: &mut Command, key_path: Option<&str>) -> io::Result<()> {
+    let mut active_socket = None;
+    let mut active_pid = None;
+
+    // 1. Check if system agent is in environment
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        if !sock.is_empty() {
+            active_socket = Some(sock);
+            if let Ok(p) = std::env::var("SSH_AGENT_PID") {
+                active_pid = p.parse::<u32>().ok();
+            }
+        }
+    }
+
+    // 2. If not, check agent.env
+    if active_socket.is_none() {
+        if let Some(env) = load_agent_env() {
+            if is_pid_alive(env.pid) {
+                active_socket = Some(env.socket);
+                active_pid = Some(env.pid);
+            } else {
+                let _ = remove_agent_env();
+            }
+        }
+    }
+
+    // 3. Start a new managed agent if none exists
+    let (sock, pid) = match (active_socket, active_pid) {
+        (Some(s), Some(p)) => (s, p),
+        (Some(s), None) => (s, 0),
+        _ => {
+            let env = start_silent()?;
+            (env.socket, env.pid)
+        }
+    };
+
+    // 4. Set environment on target command
+    cmd.env("SSH_AUTH_SOCK", &sock);
+    if pid > 0 {
+        cmd.env("SSH_AGENT_PID", pid.to_string());
+    }
+
+    // 5. Load key if not already present
+    if let Some(kp) = key_path {
+        let mut check_cmd = Command::new("ssh-add");
+        check_cmd.env("SSH_AUTH_SOCK", &sock);
+        if pid > 0 {
+            check_cmd.env("SSH_AGENT_PID", pid.to_string());
+        }
+        check_cmd.arg("-l");
+
+        let check_output = check_cmd.output()?;
+        let is_loaded = if check_output.status.success() {
+            let output_str = String::from_utf8_lossy(&check_output.stdout);
+            let target_fp = crate::commands::key::get_fingerprint(kp).unwrap_or_default();
+            output_str.contains(kp) || (!target_fp.is_empty() && output_str.contains(&target_fp))
+        } else {
+            false
+        };
+
+        if !is_loaded {
+            let mut add_cmd = Command::new("ssh-add");
+            add_cmd.env("SSH_AUTH_SOCK", &sock);
+            if pid > 0 {
+                add_cmd.env("SSH_AGENT_PID", pid.to_string());
+            }
+            add_cmd.arg(kp);
+
+            let add_status = add_cmd.status()?;
+            if !add_status.success() {
+                return Err(io::Error::new(io::ErrorKind::Other, "Falha ao carregar chave no SSH Agent."));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn add(key_name: &str) -> io::Result<()> {
-    // Find the key path in keys.yaml
     let keys = load_keys();
     let key = keys.iter().find(|k| k.name == key_name)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Chave '{}' não encontrada no keys.yaml", key_name)))?;

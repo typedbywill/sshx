@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::config::{
     get_keys_dir, load_keys, save_keys, KeyInfo, load_servers, save_servers
 };
-use crate::commands::agent::setup_agent_env;
+use crate::commands::agent::{ensure_agent_and_key, setup_agent_env};
 use tabled::{Table, Tabled};
 
 #[derive(Tabled)]
@@ -260,15 +260,19 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
 
     // 1. Install the new key using the old key for auth
     println!("Instalando nova chave no servidor remoto...");
-    let mut append_cmd = Command::new("ssh");
-    setup_agent_env(&mut append_cmd);
-    
-    // If old key exists, use it to authorize
+    let mut old_key_path = None;
     if let Some(ref old_name) = old_key_name {
         let keys = load_keys();
         if let Some(old_k) = keys.iter().find(|k| &k.name == old_name) {
-            append_cmd.args(&["-i", &old_k.path]);
+            old_key_path = Some(old_k.path.clone());
         }
+    }
+
+    let mut append_cmd = Command::new("ssh");
+    ensure_agent_and_key(&mut append_cmd, old_key_path.as_deref())?;
+    
+    if let Some(ref path) = old_key_path {
+        append_cmd.args(&["-i", path]);
     }
 
     let remote_append_cmd = format!(
@@ -294,7 +298,7 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
     // 2. Verify new key works
     println!("Verificando conexão com a nova chave...");
     let mut verify_cmd = Command::new("ssh");
-    setup_agent_env(&mut verify_cmd);
+    ensure_agent_and_key(&mut verify_cmd, Some(new_key_path.to_str().unwrap()))?;
     verify_cmd.args(&[
         "-i", new_key_path.to_str().unwrap(),
         "-o", "BatchMode=yes",
@@ -333,7 +337,7 @@ pub fn rotate_key(server_name: &str) -> io::Result<()> {
                     );
 
                     let mut remove_cmd = Command::new("ssh");
-                    setup_agent_env(&mut remove_cmd);
+                    ensure_agent_and_key(&mut remove_cmd, Some(new_key_path.to_str().unwrap()))?;
                     remove_cmd.args(&[
                         "-i", new_key_path.to_str().unwrap(),
                         "-p", &server.port.to_string(),

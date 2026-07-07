@@ -6,7 +6,7 @@ use crate::config::{
     load_servers, save_servers, Server, load_keys, add_history
 };
 use crate::commands::key::{create_key, get_fingerprint, install_key_on_server};
-use crate::commands::agent::setup_agent_env;
+use crate::commands::agent::ensure_agent_and_key;
 use dialoguer::{Input, Select, Confirm};
 use chrono::Local;
 use tabled::{Table, Tabled};
@@ -216,15 +216,19 @@ pub fn connect_server(name: &str) -> io::Result<()> {
 
     println!("Conectando-se ao servidor '{}' ({})...", server_copy.name, server_copy.host);
 
-    let mut cmd = Command::new("ssh");
-    setup_agent_env(&mut cmd);
-
-    // If key name is defined, find the path of that key
+    let mut key_path = None;
     if let Some(ref k_name) = server_copy.key_name {
         let keys = load_keys();
         if let Some(k) = keys.iter().find(|k| &k.name == k_name) {
-            cmd.arg("-i").arg(&k.path);
+            key_path = Some(k.path.clone());
         }
+    }
+
+    let mut cmd = Command::new("ssh");
+    ensure_agent_and_key(&mut cmd, key_path.as_deref())?;
+
+    if let Some(ref kp) = key_path {
+        cmd.arg("-i").arg(kp);
     }
 
     cmd.arg("-p").arg(server_copy.port.to_string());
